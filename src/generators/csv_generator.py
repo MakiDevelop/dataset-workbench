@@ -252,10 +252,61 @@ def main():
     ap.add_argument("--end", type=str, default=DEFAULT_END, help="End date YYYY-MM-DD")
     ap.add_argument("--members", type=int, default=250_000, help="Number of unique members to simulate")
     ap.add_argument("--products", type=int, default=5000, help="Number of products to simulate")
+    ap.add_argument(
+        "--scenario",
+        type=str,
+        default="clean",
+        choices=["clean", "A", "B", "C", "AB", "ABC"],
+        help="Data generation scenario: clean | A | B | C | AB | ABC",
+    )
     args = ap.parse_args()
 
     random.seed(args.seed)
     np.random.seed(args.seed)
+
+    # ============================
+    # Scenario A: realistic skew
+    # ============================
+    SCENARIO = args.scenario
+
+    # ============================
+    # Scenario B: data credibility issues
+    # ============================
+    ENABLE_B = SCENARIO in ("B", "AB")
+    # B1: fake members (looks present but untrustworthy)
+    FAKE_MEMBER_RATIO = 0.15
+    FAKE_MEMBER_VALUES = ["", "unknown", "test_user"]
+    # B2: order total inconsistency
+    INCONSISTENT_ORDER_RATIO = 0.03
+
+    # ============================
+    # Scenario C: datetime field evolution
+    # ============================
+    ENABLE_C = SCENARIO in ("C", "ABC")
+    # Time evolution split points
+    C_PHASE_1_END = parse_date("2024-06-30")   # legacy system
+    C_PHASE_2_START = parse_date("2024-07-01") # new system rollout
+    C_OVERLAP_END = parse_date("2024-07-31")   # short overlap period
+
+    # A1: campaign spike days (8~12 days)
+    if SCENARIO == "A":
+        spike_days = random.sample(
+            [
+                parse_date(args.start) + timedelta(days=i)
+                for i in range((parse_date(args.end) - parse_date(args.start)).days)
+            ],
+            k=random.randint(8, 12),
+        )
+    else:
+        spike_days = []
+
+    # A2: head products (top 20 take heavy weight)
+    HEAD_PRODUCT_COUNT = 20
+    HEAD_PRODUCT_WEIGHT = 6.0  # compared to normal product
+
+    # A3: head members (top 1% heavy buyers)
+    HEAD_MEMBER_RATIO = 0.01
+    HEAD_MEMBER_WEIGHT = 5.0
 
     fake = Faker()
     fake.seed_instance(args.seed)
@@ -346,8 +397,16 @@ def main():
                 items_per_order = args.rows - rows_written
 
             order_id = gen_order_id()
-            member_idx = random.randrange(args.members)
+            # --- Scenario A3: heavy buyer member sampling ---
+            if SCENARIO == "A" and random.random() < HEAD_MEMBER_RATIO:
+                # heavy buyer (top 1%)
+                member_idx = random.randrange(int(args.members * HEAD_MEMBER_RATIO))
+            else:
+                member_idx = random.randrange(args.members)
             member_id = member_ids[member_idx]
+            # --- Scenario B1: fake member_id (non-null but untrustworthy) ---
+            if ENABLE_B and random.random() < FAKE_MEMBER_RATIO:
+                member_id = random.choice(FAKE_MEMBER_VALUES)
 
             platform = random.choice(PLATFORMS)
             device_type = random.choices(DEVICE_TYPES, weights=[35, 55, 10], k=1)[0] if platform == "web" else random.choices(DEVICE_TYPES, weights=[10, 80, 10], k=1)[0]
@@ -364,31 +423,75 @@ def main():
             utm_medium = traffic_medium
             utm_campaign = camp_name
 
-            # Time generation
-            created_at = random_dt(start_dt, end_dt)
+            # --- Scenario A1: campaign spike days (10% orders on spike days) ---
+            if SCENARIO == "A" and spike_days and random.random() < 0.10:
+                # 10% orders come from campaign spike days
+                base_day = random.choice(spike_days)
+                created_at = base_day + timedelta(
+                    seconds=random.randint(0, 86399)
+                )
+            else:
+                created_at = random_dt(start_dt, end_dt)
 
             # paid_at depends on status
+            # (will be overwritten below if Scenario C is enabled)
             if order_status in ("created", "cancelled"):
                 paid_at = ""
             else:
                 paid_at_dt = created_at + timedelta(minutes=random.randint(1, 6 * 60))
                 paid_at = paid_at_dt.isoformat()
 
-            # purchase_time: use paid time when available, otherwise created
-            if paid_at:
-                purchase_time = paid_at
-            else:
-                purchase_time = created_at.isoformat()
-
             created_at_str = created_at.isoformat()
+
+            # ============================
+            # Scenario C: datetime evolution
+            # ============================
+            if ENABLE_C:
+                if created_at < C_PHASE_1_END:
+                    # Phase 1: legacy system (only created_at is reliable)
+                    paid_at = ""
+                    purchase_time = created_at_str
+                elif created_at < C_OVERLAP_END:
+                    # Overlap: mixed world (some orders have new field, some don't)
+                    if random.random() < 0.5:
+                        paid_at = ""
+                        purchase_time = created_at_str
+                    else:
+                        paid_at = created_at_str
+                        purchase_time = created_at_str
+                else:
+                    # Phase 2: new system (purchase_time reliable, paid_at optional)
+                    paid_at = created_at_str if order_status not in ("created", "cancelled") else ""
+                    purchase_time = created_at_str
+            else:
+                # Default (clean / A / B)
+                if paid_at:
+                    purchase_time = paid_at
+                else:
+                    purchase_time = created_at_str
 
             # Member snapshot fields
             days_since_last = int(member_days_since_last[member_idx])
             member_type, days_since_last_purchase, first_purchase_flag = member_type_and_recency(days_since_last)
             member_level = member_level_from_id(member_id)
 
-            # Pick products for items (allow repeats rarely)
-            chosen_products = random.sample(products, k=min(items_per_order, len(products)))
+            # --- Scenario A2: product weighted sampling (head products dominate) ---
+            if SCENARIO == "A":
+                # weighted product sampling (head products dominate)
+                weights = [
+                    HEAD_PRODUCT_WEIGHT if i < HEAD_PRODUCT_COUNT else 1.0
+                    for i in range(len(products))
+                ]
+                chosen_products = random.choices(
+                    products,
+                    weights=weights,
+                    k=min(items_per_order, len(products)),
+                )
+            else:
+                chosen_products = random.sample(
+                    products,
+                    k=min(items_per_order, len(products)),
+                )
 
             # Compute item subtotals, then order-level amounts
             item_rows = []
@@ -426,6 +529,14 @@ def main():
             tax_amount = 0
 
             order_total = max(0, items_total - discount_amount + shipping_fee + tax_amount)
+            # --- Scenario B2: inconsistent order total (subtle) ---
+            if ENABLE_B and random.random() < INCONSISTENT_ORDER_RATIO and order_total > 0:
+                # introduce small but real inconsistency (+/- 5~15%)
+                drift = random.uniform(0.05, 0.15)
+                if random.random() < 0.5:
+                    order_total = int(order_total * (1 + drift))
+                else:
+                    order_total = int(order_total * (1 - drift))
 
             # Status effects:
             # cancelled: total 0-ish (keep row, but treat as cancelled order)

@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <title>Dataset Overview</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+
+  <main class="overview-page">
+
+    <!-- Header -->
+    <header>
+      <h1>資料總覽</h1>
+      <p class="subtitle">快速判斷這份購買記錄是否適合進行分析</p>
+    </header>
+
+    <!-- Section: Dataset Health -->
+    <section class="overview-section">
+      <h2>資料健康狀態</h2>
+
+      <div class="big-metrics">
+        <div class="metric-card">
+          <div class="metric-label">資料涵蓋期間</div>
+          <div id="dataset-date-range" class="metric-value">—</div>
+        </div>
+
+        <div class="metric-card">
+          <div class="metric-label">最近一筆交易</div>
+          <div id="dataset-recent-date" class="metric-value">—</div>
+        </div>
+
+        <div class="metric-card">
+          <div class="metric-label">主要時間欄位</div>
+          <div id="dataset-main-time-col" class="metric-value">—</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Section: Dataset Scale -->
+    <section class="overview-section">
+      <h2>資料規模</h2>
+
+      <div class="big-metrics">
+        <div class="metric-card">
+          <div class="metric-label">訂單數</div>
+          <div id="metric-order-count" class="metric-value">—</div>
+        </div>
+
+        <div class="metric-card">
+          <div class="metric-label">訂單明細數</div>
+          <div id="metric-item-count" class="metric-value">—</div>
+        </div>
+
+        <div class="metric-card">
+          <div class="metric-label">會員數</div>
+          <div id="metric-member-count" class="metric-value">—</div>
+        </div>
+
+        <div class="metric-card">
+          <div class="metric-label">商品數</div>
+          <div id="metric-product-count" class="metric-value">—</div>
+        </div>
+      </div>
+      <!-- Micro metrics (derived ratios, low emphasis) -->
+      <div class="micro-metrics">
+        <div class="micro-metric">
+          <span class="micro-label">每會員訂單數</span>
+          <span id="micro-orders-per-member" class="micro-value">—</span>
+        </div>
+        <div class="micro-metric">
+          <span class="micro-label">每訂單品項數</span>
+          <span id="micro-items-per-order" class="micro-value">—</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Section: Data Quality -->
+    <section class="overview-section">
+      <h2>資料品質提醒</h2>
+
+      <ul id="data-quality-list">
+        <li>尚未分析資料品質</li>
+      </ul>
+    </section>
+
+    <!-- Section: System Observation -->
+    <section class="overview-section" id="overview-observation">
+      <h2>系統觀察摘要</h2>
+
+      <div class="observation-card">
+        <ul id="observation-list">
+          <li>系統尚未完成資料結構觀察。</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- Section: Trend Preview -->
+    <section class="overview-section">
+      <h2>每日訂單數趨勢（預覽）</h2>
+
+      <p class="hint">
+        此圖用於快速判斷資料是否為「活資料」，非最終分析結果。
+      </p>
+
+      <canvas id="chart-daily-orders" height="240"></canvas>
+    </section>
+
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="/static/overview.js"></script>
+</body>
+</html>

@@ -1,7 +1,14 @@
 const form = document.getElementById("upload-form");
 const result = document.getElementById("result");
 
+
 let latestAnalysisId = null; // 用來儲存最新的 analysis_id，供 Step B 使用
+
+// 工具函式：格式化檔案大小（MB）
+function formatFileSizeMB(sizeMB) {
+  if (sizeMB === null || sizeMB === undefined) return "-";
+  return `${sizeMB} MB`;
+}
 
 let currentChartContainer = null; // 目前圖表所屬的 container（保存 Chart.js instance 用）
 
@@ -89,6 +96,17 @@ form.addEventListener("submit", async (e) => {
 
     // 儲存最新的 analysis_id 供 Step B 使用
     latestAnalysisId = data.analysis_id || null;
+
+    // ===== 顯示 Analysis ID 與 Overview 入口 =====
+    const entrySection = document.getElementById("analysis-entry");
+    const idValue = document.getElementById("analysis-id-value");
+    const overviewLink = document.getElementById("go-overview-link");
+
+    if (entrySection && idValue && overviewLink && latestAnalysisId) {
+      idValue.textContent = latestAnalysisId;
+      overviewLink.href = `/overview?analysis_id=${latestAnalysisId}`;
+      entrySection.classList.remove("hidden");
+    }
 
     // 清空結果區域
     result.textContent = "";

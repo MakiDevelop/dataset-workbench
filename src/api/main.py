@@ -20,6 +20,14 @@ async def serve_frontend():
         return frontend_path.read_text()
     return "index.html not found."
 
+# Overview UI（暫時沿用 index.html，之後再拆）
+@app.get("/overview", response_class=HTMLResponse)
+async def serve_overview_ui():
+    frontend_path = Path("src/frontend/overview.html")
+    if frontend_path.is_file():
+        return frontend_path.read_text()
+    return "overview.html not found."
+
 @app.get("/reduce", response_class=HTMLResponse)
 async def serve_reducer_ui():
     frontend_path = Path("src/frontend/select.html")

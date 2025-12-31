@@ -27,6 +27,7 @@ from pipelines.analysis_bootstrap import (
     step_5_available_analyses,
     derive_analysis_blacklist,
 )
+from pipelines.dataset_overview import generate_dataset_overview
 
 # === Router 一定要先定義（否則 decorator 會 NameError） ===
 router = APIRouter()
@@ -40,6 +41,98 @@ DATA_INPUT_DIR.mkdir(parents=True, exist_ok=True)
 def ping():
     """健康檢查用 endpoint。"""
     return {"status": "ok"}
+
+
+@router.post("/overview/daily-orders")
+async def overview_daily_orders(payload: dict = Body(...)):
+    """
+    Overview 專用：每日訂單數趨勢（Preview）
+    - 固定 day granularity
+    - 指標：訂單張數（COUNT DISTINCT order_id）
+    - 用於判斷資料是否為「活資料」
+    """
+    analysis_id = payload.get("analysis_id")
+    if not analysis_id:
+        raise HTTPException(status_code=400, detail="analysis_id is required")
+
+    csv_path = DATA_INPUT_DIR / f"{analysis_id}.csv"
+    if not csv_path.exists():
+        raise HTTPException(status_code=404, detail="Analysis data not found")
+
+    # 優先使用 purchase_time，若不存在則 fallback
+    time_column = None
+    for col in ("purchase_time", "order_time", "created_at", "created_time", "order_date"):
+        # DuckDB 直接檢查 CSV header
+        try:
+            conn = duckdb.connect()
+            cols = conn.execute(
+                f"SELECT * FROM read_csv_auto('{str(csv_path)}') LIMIT 1"
+            ).df().columns
+            if col in cols:
+                time_column = col
+                break
+        except Exception:
+            continue
+
+    if not time_column:
+        raise HTTPException(status_code=400, detail="No usable datetime column found")
+
+    query = f"""
+        SELECT
+            DATE_TRUNC('day', {time_column}) AS date,
+            COUNT(DISTINCT order_id) AS value
+        FROM read_csv_auto('{str(csv_path)}')
+        GROUP BY date
+        ORDER BY date
+    """
+
+    conn = duckdb.connect()
+    rows = conn.execute(query).fetchall()
+
+    series = [
+        {
+            "date": r[0].strftime("%Y-%m-%d"),
+            "value": r[1],
+        }
+        for r in rows
+        if r[0] is not None
+    ]
+
+    return {
+        "analysis_id": analysis_id,
+        "time_column": time_column,
+        "metric": "order_count",
+        "series": series,
+    }
+
+
+@router.post("/overview")
+async def dataset_overview(payload: dict = Body(...)):
+    """
+    Dataset Overview
+    - 讀取已上傳的 CSV
+    - 回傳 dataset 全貌摘要（row count, column types, missing ratio, date range）
+    """
+    analysis_id = payload.get("analysis_id")
+    if not analysis_id:
+        raise HTTPException(status_code=400, detail="analysis_id is required")
+
+    csv_path = DATA_INPUT_DIR / f"{analysis_id}.csv"
+    if not csv_path.exists():
+        raise HTTPException(status_code=404, detail="Analysis data not found")
+
+    # 讀取資料（僅用於 overview，允許一次性掃描）
+    df = pd.read_csv(csv_path)
+
+    overview = generate_dataset_overview(
+        df=df,
+        file_size_bytes=csv_path.stat().st_size,
+    )
+
+    return {
+        "analysis_id": analysis_id,
+        "overview": overview,
+    }
 
 
 @router.post("/bootstrap")
