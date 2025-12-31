@@ -2,7 +2,23 @@ const form = document.getElementById("upload-form");
 const result = document.getElementById("result");
 
 
+
 let latestAnalysisId = null; // 用來儲存最新的 analysis_id，供 Step B 使用
+
+// ===== Dataset status snapshot (derived from Overview) =====
+// 僅描述資料狀態，不直接影響 UI，供分析卡片判斷使用
+let datasetStatus = {
+  hasTimeColumn: false,
+  hasAmount: false,
+  hasProductId: false,
+  hasMemberId: false,
+
+  // 風險與不穩定性旗標
+  timeUnstable: false,
+  hasSpike: false,
+  amountInconsistent: false,
+  memberUnreliable: false,
+};
 
 // 工具函式：格式化檔案大小（MB）
 function formatFileSizeMB(sizeMB) {
@@ -43,8 +59,17 @@ function renderCapabilities(capabilities) {
     card.appendChild(label);
     card.appendChild(desc);
 
+    // ===== 套用分析卡片狀態（ok / caution / disabled）=====
+    const status = evaluateAnalysisStatus(item.key, datasetStatus);
+    card.classList.add(`status-${status}`);
+    if (status === "disabled") {
+      card.classList.add("disabled");
+    }
+
     optionsContainer.appendChild(card);
   });
+  // Debug：顯示目前 datasetStatus 狀態
+  console.debug("[analysis card status rendered]", datasetStatus);
 }
 
 // 取得分析能力清單，成功後呼叫 renderCapabilities，失敗則顯示錯誤訊息
@@ -93,6 +118,84 @@ form.addEventListener("submit", async (e) => {
     }
 
     const data = await response.json();
+
+    // ===== Populate datasetStatus from bootstrap result =====
+    // 基本欄位存在性（結構）
+    datasetStatus.hasTimeColumn = !!(
+      data.overview &&
+      (
+        data.overview.time_column ||
+        (data.overview.datetime_columns && data.overview.datetime_columns.length > 0) ||
+        (data.overview.date_range && Object.keys(data.overview.date_range).length > 0)
+      )
+    );
+
+    datasetStatus.hasAmount = !!(
+      data.preview &&
+      Array.isArray(data.preview) &&
+      data.preview.length > 0 &&
+      (
+        "order_total" in data.preview[0] ||
+        "order_total_amount" in data.preview[0] ||
+        "total_amount" in data.preview[0]
+      )
+    );
+
+    datasetStatus.hasProductId = !!(
+      data.preview &&
+      Array.isArray(data.preview) &&
+      data.preview.length > 0 &&
+      (
+        "product_id" in data.preview[0] ||
+        "product_name" in data.preview[0]
+      )
+    );
+
+    datasetStatus.hasMemberId = !!(
+      data.preview &&
+      Array.isArray(data.preview) &&
+      data.preview.length > 0 &&
+      "member_id" in data.preview[0]
+    );
+
+    // ===== 風險與不穩定性（吃 blacklist）=====
+    datasetStatus.timeUnstable = false;
+    datasetStatus.hasSpike = false;
+    datasetStatus.amountInconsistent = false;
+    datasetStatus.memberUnreliable = false;
+
+    if (Array.isArray(data.blacklist)) {
+      data.blacklist.forEach(item => {
+        const reason = typeof item.reason === "string"
+          ? item.reason.toLowerCase()
+          : "";
+
+        const metric = typeof item.metric === "string"
+          ? item.metric.toLowerCase()
+          : "";
+
+        // 時間不穩定 / 尖峰
+        if (reason.includes("time") || metric.includes("time")) {
+          datasetStatus.timeUnstable = true;
+        }
+        if (reason.includes("spike") || reason.includes("波動")) {
+          datasetStatus.hasSpike = true;
+        }
+
+        // 金額一致性
+        if (reason.includes("amount") || metric.includes("amount") || reason.includes("金額")) {
+          datasetStatus.amountInconsistent = true;
+        }
+
+        // 會員可信度
+        if (reason.includes("member") || reason.includes("會員")) {
+          datasetStatus.memberUnreliable = true;
+        }
+      });
+    }
+
+    // Debug（可在穩定後移除或改成 console.debug）
+    console.debug("[datasetStatus]", datasetStatus);
 
     // 儲存最新的 analysis_id 供 Step B 使用
     latestAnalysisId = data.analysis_id || null;
@@ -990,4 +1093,41 @@ function renderNewVsReturningPie(container, items) {
   });
   // 將 Chart.js 實例存放在 container 上，方便下次 destroy
   container._chart = chart;
+}
+/**
+ * 根據資料狀態，判斷分析卡片的可用性
+ * 回傳值：
+ *  - "ok"        : 可直接使用
+ *  - "caution"   : 可使用，但需留意
+ *  - "disabled"  : 不建議或不可使用
+ */
+function evaluateAnalysisStatus(analysisKey, status) {
+  switch (analysisKey) {
+    case "time_trend":
+      if (!status.hasTimeColumn) return "disabled";
+      if (status.timeUnstable || status.hasSpike) return "caution";
+      return "ok";
+
+    case "aov":
+      if (!status.hasAmount) return "disabled";
+      if (status.amountInconsistent) return "caution";
+      return "ok";
+
+    case "top_products":
+      if (!status.hasProductId) return "disabled";
+      return "ok";
+
+    case "top_members":
+      if (!status.hasMemberId) return "disabled";
+      if (status.memberUnreliable) return "caution";
+      return "ok";
+
+    case "new_vs_returning":
+      if (!status.hasMemberId || !status.hasTimeColumn) return "disabled";
+      if (status.memberUnreliable) return "caution";
+      return "ok";
+
+    default:
+      return "ok";
+  }
 }

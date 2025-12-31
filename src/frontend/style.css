@@ -579,3 +579,16 @@ input:focus {
     max-height: 300px;
   }
 }
+
+.analysis-option-card.status-ok {
+  /* 預設即可，不一定要寫 */
+}
+
+.analysis-option-card.status-caution {
+  border-left: 4px solid #f59e0b; /* 黃 */
+}
+
+.analysis-option-card.status-disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
