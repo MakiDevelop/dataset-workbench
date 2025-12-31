@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <title>交易資料分析工具</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+</head>
+<body>
+  <div class="container">
+  <h1>交易資料分析</h1>
+  <div style="margin: 12px 0 20px 0;">
+    <a href="/reduce" style="text-decoration: none;">
+      <button class="primary">前往 CSV／XLS 縮小器</button>
+    </a>
+  </div>
+  <p>請上傳廠商的購買紀錄（CSV / XLS / XLSX）</p>
+
+  <!-- 上傳CSV/XLS(X)檔案以進行分析 -->
+  <form id="upload-form" enctype="multipart/form-data">
+    <input
+      type="file"
+      id="file"
+      name="file"
+      accept=".csv,.xls,.xlsx"
+      required
+    />
+    <button type="submit">開始分析</button>
+  </form>
+
+  <hr />
+  <!-- 此區塊保留用於呈現 /analysis/capabilities 的結果 -->
+  <section>
+    <h2>可用分析</h2>
+    <div id="analysis-options">
+      請上傳資料後，分析選項將會顯示於此。
+    </div>
+    <!-- 圖表將在選擇分析後顯示於此，面板可收合/展開 -->
+    <div id="analysis-chart-panel" class="analysis-chart-panel hidden">
+      <button id="chart-toggle" type="button">收合圖表 ▲</button>
+      <div id="analysis-chart-content"></div>
+    </div>
+  </section>
+
+  <div class="section">
+    <pre id="result"></pre>
+  </div>
+
+  <!-- 開發階段靜態資源會透過 /static 提供 -->
+  <script src="/static/app.js"></script>
+  </div>
+</body>
+</html>

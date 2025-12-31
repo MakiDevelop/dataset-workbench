@@ -1,0 +1,23 @@
+# data
+numpy
+pandas
+polars
+pyarrow
+scipy
+scikit-learn
+faker
+duckdb
+
+# visualization
+matplotlib
+seaborn
+plotly
+
+# web
+fastapi
+uvicorn
+jinja2
+python-multipart
+
+# dev / analysis
+ipython

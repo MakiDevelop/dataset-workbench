@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <title>CSV / XLS 縮小器</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="container">
+
+<h1>CSV / XLS 縮小器</h1>
+  <div style="margin: 12px 0 20px 0;">
+    <a href="/ui" style="text-decoration: none;">
+      <button class="primary">交易資料分析</button>
+    </a>
+  </div>
+<div class="section">
+    <h3>1. 上傳檔案</h3>
+    <input type="file" id="fileInput">
+    <button class="primary" onclick="uploadFile()">Upload</button>
+    <div id="uploadStatus" class="muted"></div>
+</div>
+
+<div class="section">
+    <h3>2. 預覽資料</h3>
+    <div id="previewInfo" class="muted"></div>
+    <div style="overflow:auto; max-height:400px;">
+        <table id="previewTable"></table>
+    </div>
+</div>
+
+<div class="section">
+    <h3>3. 篩選條件</h3>
+
+    <div class="logic-toggle">
+      <span class="logic-label">條件邏輯</span>
+      <div class="logic-buttons">
+        <button type="button" class="logic-btn active" data-value="AND">AND</button>
+        <button type="button" class="logic-btn" data-value="OR">OR</button>
+      </div>
+      <div id="logicSummary" class="logic-summary">
+        目前條件邏輯：AND
+      </div>
+
+      <!-- hidden radios keep existing JS working -->
+      <input type="radio" name="logic" value="AND" checked hidden>
+      <input type="radio" name="logic" value="OR" hidden>
+    </div>
+
+    <div class="filters" id="filters"></div>
+    <button onclick="addFilter()">+ 新增條件</button>
+</div>
+
+<div class="section">
+    <h3>4. 查詢結果</h3>
+    <div id="queryStatus" class="muted">尚未執行查詢</div>
+    <button class="primary" onclick="previewQuery()">預覽查詢結果</button>
+</div>
+
+<div class="section">
+    <h3>5. 匯出</h3>
+    <button id="exportCsvBtn" class="primary" onclick="exportData('csv')" disabled>匯出 CSV</button>
+    <button id="exportXlsxBtn" onclick="exportData('xlsx')" disabled>匯出 XLSX</button>
+</div>
+
+<!-- Export progress overlay -->
+<div id="exportOverlay" class="export-overlay hidden">
+  <div class="export-card">
+    <div class="spinner"></div>
+    <div class="export-text">匯出中，請稍候…</div>
+  </div>
+</div>
+
+<script>
+let datasetId = null;
+let columns = [];
+
+function updateLogicSummary() {
+    const value = document.querySelector('input[name="logic"]:checked').value;
+    const summary = document.getElementById("logicSummary");
+    if (summary) {
+        summary.innerText = `目前條件邏輯：${value}`;
+    }
+}
+
+document.querySelectorAll(".logic-btn").forEach(btn => {
+  btn.addEventListener("click", () => {
+    const value = btn.dataset.value;
+
+    document.querySelectorAll(".logic-btn").forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+
+    const radio = document.querySelector(`input[name="logic"][value="${value}"]`);
+    if (radio) {
+      radio.checked = true;
+    }
+
+    updateLogicSummary();
+  });
+});
+
+function uploadFile() {
+    const fileInput = document.getElementById("fileInput");
+    if (!fileInput.files.length) {
+        alert("請選擇檔案");
+        return;
+    }
+
+    const formData = new FormData();
+    formData.append("file", fileInput.files[0]);
+
+    fetch("/api/reduce/upload", {
+        method: "POST",
+        body: formData
+    })
+    .then(r => r.json())
+    .then(data => {
+        datasetId = data.dataset_id;
+        document.getElementById("uploadStatus").innerText =
+            "已上傳，dataset_id = " + datasetId;
+        loadPreview();
+        disableExport();
+        document.getElementById("queryStatus").innerText = "尚未執行查詢";
+    });
+}
+
+function loadPreview() {
+    fetch(`/api/reduce/${datasetId}/preview`)
+        .then(r => r.json())
+        .then(data => {
+            columns = data.columns.map(c => c.name);
+            document.getElementById("previewInfo").innerText =
+                `共 ${data.total_rows} 筆，顯示前 ${data.rows.length} 筆`;
+
+            renderTable(data.rows);
+        });
+}
+
+function renderTable(rows) {
+    const table = document.getElementById("previewTable");
+    table.innerHTML = "";
+
+    if (!rows.length) return;
+
+    const thead = document.createElement("thead");
+    const headRow = document.createElement("tr");
+    Object.keys(rows[0]).forEach(k => {
+        const th = document.createElement("th");
+        th.innerText = k;
+        headRow.appendChild(th);
+    });
+    thead.appendChild(headRow);
+    table.appendChild(thead);
+
+    const tbody = document.createElement("tbody");
+    rows.forEach(row => {
+        const tr = document.createElement("tr");
+        Object.values(row).forEach(v => {
+            const td = document.createElement("td");
+            td.innerText = v === null ? "" : v;
+            tr.appendChild(td);
+        });
+        tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+}
+
+function addFilter() {
+    if (!columns.length) {
+        alert("請先上傳並預覽資料");
+        return;
+    }
+
+    const container = document.getElementById("filters");
+
+    const row = document.createElement("div");
+    row.className = "filter-row";
+
+    const colSelect = document.createElement("select");
+    columns.forEach(c => {
+        const opt = document.createElement("option");
+        opt.value = c;
+        opt.innerText = c;
+        colSelect.appendChild(opt);
+    });
+
+    const opSelect = document.createElement("select");
+    ["=", "!=", ">", ">=", "<", "<=", "contains"].forEach(op => {
+        const opt = document.createElement("option");
+        opt.value = op;
+        opt.innerText = op;
+        opSelect.appendChild(opt);
+    });
+
+    const valInput = document.createElement("input");
+    valInput.placeholder = "value";
+
+    const removeBtn = document.createElement("button");
+    removeBtn.innerText = "x";
+    removeBtn.onclick = () => row.remove();
+
+    row.appendChild(colSelect);
+    row.appendChild(opSelect);
+    row.appendChild(valInput);
+    row.appendChild(removeBtn);
+
+    if (container.children.length > 0) {
+        const connector = document.createElement("div");
+        connector.className = "logic-connector";
+        connector.innerText = document.querySelector('input[name="logic"]:checked').value;
+        container.appendChild(connector);
+    }
+    container.appendChild(row);
+}
+
+function previewQuery() {
+    if (!datasetId) {
+        alert("尚未上傳資料");
+        return;
+    }
+
+    const overlay = document.getElementById("exportOverlay");
+    overlay.classList.remove("hidden");
+
+    const filters = [];
+    document.querySelectorAll(".filter-row").forEach(row => {
+        const selects = row.querySelectorAll("select");
+        const input = row.querySelector("input");
+        if (!input.value) return;
+
+        filters.push({
+            column: selects[0].value,
+            op: selects[1].value,
+            value: input.value
+        });
+    });
+
+    const qs = document.getElementById("queryStatus");
+    qs.className = "muted";
+    qs.innerText = "查詢中…";
+
+    fetch(`/api/reduce/${datasetId}/preview_query`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            logic: document.querySelector('input[name="logic"]:checked').value,
+            filters
+        })
+    })
+    .then(r => r.json())
+    .then(result => {
+        if (!result.ok) {
+            qs.className = "error";
+            qs.innerText = `查詢失敗：${result.error}`;
+            disableExport();
+            return;
+        }
+
+        qs.className = "success";
+        qs.innerText = `命中 ${result.matched_rows} 筆（${result.elapsed_ms} ms）`;
+
+        if (result.matched_rows > 0) {
+            enableExport();
+        } else {
+            disableExport();
+        }
+    })
+    .catch(err => {
+        qs.className = "error";
+        qs.innerText = `查詢錯誤：${err}`;
+        disableExport();
+    });
+}
+
+function enableExport() {
+    document.getElementById("exportCsvBtn").disabled = false;
+    document.getElementById("exportXlsxBtn").disabled = false;
+}
+
+function disableExport() {
+    document.getElementById("exportCsvBtn").disabled = true;
+    document.getElementById("exportXlsxBtn").disabled = true;
+}
+
+function exportData(format) {
+    if (!datasetId) {
+        alert("尚未上傳資料");
+        return;
+    }
+
+    const filters = [];
+    document.querySelectorAll(".filter-row").forEach(row => {
+        const selects = row.querySelectorAll("select");
+        const input = row.querySelector("input");
+        if (!input.value) return;
+
+        filters.push({
+            column: selects[0].value,
+            op: selects[1].value,
+            value: input.value
+        });
+    });
+
+    fetch(`/api/reduce/${datasetId}/export`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            format: format,
+            logic: document.querySelector('input[name="logic"]:checked').value,
+            filters: filters
+        })
+    })
+    .then(res => res.blob())
+    .then(blob => {
+        overlay.classList.add("hidden");
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `filtered.${format}`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+    })
+    .catch(err => {
+        overlay.classList.add("hidden");
+        alert("匯出失敗，請稍後再試");
+    });
+}
+// Keep summary in sync with logic radio buttons
+document.querySelectorAll('input[name="logic"]').forEach(radio => {
+    radio.addEventListener('change', updateLogicSummary);
+});
+updateLogicSummary();
+</script>
+
+</div>
+</body>
+</html>
