@@ -1,0 +1,49 @@
+# ================================
+# Python
+# ================================
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+.env
+.venv/
+venv/
+
+# ================================
+# OS / Editor
+# ================================
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# ================================
+# Logs / temp
+# ================================
+*.log
+*.tmp
+
+# ================================
+# Data files (keep structure only)
+# ================================
+
+# Ignore all files under data/
+data/**
+
+# But keep directory structure
+!data/
+!data/input/
+!data/output/
+
+# Keep empty directories tracked
+!data/input/.gitkeep
+!data/output/.gitkeep
+
+# ================================
+# Exports / generated files
+# ================================
+*.csv
+*.xlsx
+*.xls
+*.parquet
