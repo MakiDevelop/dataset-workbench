@@ -1,5 +1,9 @@
-
 # dataset-workbench
+
+![License: MIT](https://img.shields.io/badge/license-MIT-green)
+![Python](https://img.shields.io/badge/python-3.x-blue)
+![Docker](https://img.shields.io/badge/Docker-ready-2496ED)
+
 
 Practical data preparation before analysis — without Excel freezing.
 在分析之前，先把資料整理到「能用」的狀態，不再被 Excel 卡住。
