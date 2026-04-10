@@ -13,11 +13,10 @@ analysis.py
 
 import uuid
 from pathlib import Path
-from datetime import datetime
 
 import duckdb
 import pandas as pd
-from fastapi import APIRouter, UploadFile, File, HTTPException, Body
+from fastapi import APIRouter, UploadFile, File, HTTPException
 
 from pipelines.analysis_bootstrap import (
     step_1_overview,
@@ -28,6 +27,25 @@ from pipelines.analysis_bootstrap import (
     derive_analysis_blacklist,
 )
 from pipelines.dataset_overview import generate_dataset_overview
+from api.schemas import (
+    AnalysisRequest,
+    GranularityRequest,
+    RankingRequest,
+    DatasetOverviewResponse,
+    DailyOrdersResponse,
+    TimeTrendResponse,
+    AOVResponse,
+    RankingResponse,
+    NewVsReturningResponse,
+    CapabilityItem,
+    TimeSeriesPoint,
+    RankingItem,
+)
+from pipelines.chart_builder import (
+    build_time_series_chart,
+    build_ranking_chart,
+    build_pie_chart,
+)
 
 # === Router 一定要先定義（否則 decorator 會 NameError） ===
 router = APIRouter()
@@ -43,26 +61,21 @@ def ping():
     return {"status": "ok"}
 
 
-@router.post("/overview/daily-orders")
-async def overview_daily_orders(payload: dict = Body(...)):
+@router.post("/overview/daily-orders", response_model=DailyOrdersResponse)
+async def overview_daily_orders(payload: AnalysisRequest):
     """
     Overview 專用：每日訂單數趨勢（Preview）
     - 固定 day granularity
     - 指標：訂單張數（COUNT DISTINCT order_id）
     - 用於判斷資料是否為「活資料」
     """
-    analysis_id = payload.get("analysis_id")
-    if not analysis_id:
-        raise HTTPException(status_code=400, detail="analysis_id is required")
-
-    csv_path = DATA_INPUT_DIR / f"{analysis_id}.csv"
+    csv_path = DATA_INPUT_DIR / f"{payload.analysis_id}.csv"
     if not csv_path.exists():
         raise HTTPException(status_code=404, detail="Analysis data not found")
 
     # 優先使用 purchase_time，若不存在則 fallback
     time_column = None
     for col in ("purchase_time", "order_time", "created_at", "created_time", "order_date"):
-        # DuckDB 直接檢查 CSV header
         try:
             conn = duckdb.connect()
             cols = conn.execute(
@@ -90,38 +103,38 @@ async def overview_daily_orders(payload: dict = Body(...)):
     rows = conn.execute(query).fetchall()
 
     series = [
-        {
-            "date": r[0].strftime("%Y-%m-%d"),
-            "value": r[1],
-        }
+        TimeSeriesPoint(date=r[0].strftime("%Y-%m-%d"), value=r[1])
         for r in rows
         if r[0] is not None
     ]
 
-    return {
-        "analysis_id": analysis_id,
-        "time_column": time_column,
-        "metric": "order_count",
-        "series": series,
-    }
+    series_dicts = [s.model_dump() for s in series]
+    chart = build_time_series_chart(
+        series=series_dicts,
+        metric_label="訂單數",
+        chart_title="每日訂單數趨勢",
+        fill=True,
+    )
+
+    return DailyOrdersResponse(
+        analysis_id=payload.analysis_id,
+        time_column=time_column,
+        series=series,
+        chart=chart,
+    )
 
 
-@router.post("/overview")
-async def dataset_overview(payload: dict = Body(...)):
+@router.post("/overview", response_model=DatasetOverviewResponse)
+async def dataset_overview(payload: AnalysisRequest):
     """
     Dataset Overview
     - 讀取已上傳的 CSV
     - 回傳 dataset 全貌摘要（row count, column types, missing ratio, date range）
     """
-    analysis_id = payload.get("analysis_id")
-    if not analysis_id:
-        raise HTTPException(status_code=400, detail="analysis_id is required")
-
-    csv_path = DATA_INPUT_DIR / f"{analysis_id}.csv"
+    csv_path = DATA_INPUT_DIR / f"{payload.analysis_id}.csv"
     if not csv_path.exists():
         raise HTTPException(status_code=404, detail="Analysis data not found")
 
-    # 讀取資料（僅用於 overview，允許一次性掃描）
     df = pd.read_csv(csv_path)
 
     overview = generate_dataset_overview(
@@ -130,7 +143,7 @@ async def dataset_overview(payload: dict = Body(...)):
     )
 
     return {
-        "analysis_id": analysis_id,
+        "analysis_id": payload.analysis_id,
         "overview": overview,
     }
 
@@ -176,30 +189,23 @@ async def bootstrap(file: UploadFile = File(...)):
     }
 
 
-@router.post("/time-trend")
-async def time_trend(payload: dict = Body(...)):
+@router.post("/time-trend", response_model=TimeTrendResponse)
+async def time_trend(payload: GranularityRequest):
     """
     安全的時間序列趨勢分析
     - 時間欄位：purchase_time
     - 指標：SUM(order_total_amount)
     - granularity：day / month
     """
-    analysis_id = payload.get("analysis_id")
-    if not analysis_id:
-        raise HTTPException(status_code=400, detail="analysis_id is required")
-
-    granularity = payload.get("granularity", "day")
-    if granularity not in ("day", "month"):
-        raise HTTPException(status_code=400, detail="granularity must be 'day' or 'month'")
-
-    csv_path = DATA_INPUT_DIR / f"{analysis_id}.csv"
+    csv_path = DATA_INPUT_DIR / f"{payload.analysis_id}.csv"
     if not csv_path.exists():
         raise HTTPException(status_code=404, detail="Analysis data not found")
 
     conn = duckdb.connect()
+    g = payload.granularity
     query = f"""
         SELECT
-            DATE_TRUNC('{granularity}', purchase_time) AS time,
+            DATE_TRUNC('{g}', purchase_time) AS time,
             SUM(order_total_amount) AS value
         FROM read_csv_auto('{str(csv_path)}')
         GROUP BY time
@@ -207,39 +213,38 @@ async def time_trend(payload: dict = Body(...)):
     """
     rows = conn.execute(query).fetchall()
 
+    fmt = "%Y-%m-%d" if g == "day" else "%Y-%m"
     series = [
-        {
-            "time": r[0].strftime("%Y-%m-%d") if granularity == "day" else r[0].strftime("%Y-%m"),
-            "value": r[1],
-        }
+        TimeSeriesPoint(time=r[0].strftime(fmt), value=r[1])
         for r in rows
     ]
 
-    return {
-        "analysis_id": analysis_id,
-        "granularity": granularity,
-        "time_column": "purchase_time",
-        "metric": "order_total_amount",
-        "series": series,
-    }
+    series_dicts = [s.model_dump() for s in series]
+    chart = build_time_series_chart(
+        series=series_dicts,
+        metric_label="銷售金額",
+        granularity=g,
+        chart_title="銷售金額趨勢",
+    )
+
+    return TimeTrendResponse(
+        analysis_id=payload.analysis_id,
+        granularity=g,
+        time_column="purchase_time",
+        metric="order_total_amount",
+        series=series,
+        chart=chart,
+    )
 
 
-@router.post("/top-products")
-async def top_products(payload: dict = Body(...)):
+@router.post("/top-products", response_model=RankingResponse)
+async def top_products(payload: RankingRequest):
     """
     熱門商品排行（安全分析）
     - 維度：product_name
     - 指標：SUM(item_subtotal)
     """
-    analysis_id = payload.get("analysis_id")
-    if not analysis_id:
-        raise HTTPException(status_code=400, detail="analysis_id is required")
-
-    limit = int(payload.get("limit", 10))
-    if limit <= 0:
-        limit = 10
-
-    csv_path = DATA_INPUT_DIR / f"{analysis_id}.csv"
+    csv_path = DATA_INPUT_DIR / f"{payload.analysis_id}.csv"
     if not csv_path.exists():
         raise HTTPException(status_code=404, detail="Analysis data not found")
 
@@ -251,35 +256,37 @@ async def top_products(payload: dict = Body(...)):
         FROM read_csv_auto('{str(csv_path)}')
         GROUP BY product_name
         ORDER BY value DESC
-        LIMIT {limit}
+        LIMIT {payload.limit}
     """
     rows = conn.execute(query).fetchall()
 
-    return {
-        "analysis_id": analysis_id,
-        "dimension": "product_name",
-        "metric": "item_subtotal",
-        "limit": limit,
-        "items": [{"key": r[0], "value": r[1]} for r in rows],
-    }
+    items = [RankingItem(key=r[0], value=r[1]) for r in rows]
+    items_dicts = [i.model_dump() for i in items]
+    chart = build_ranking_chart(
+        items=items_dicts,
+        dimension_label="商品",
+        metric_label="銷售金額",
+        chart_title="熱門商品排行",
+    )
+
+    return RankingResponse(
+        analysis_id=payload.analysis_id,
+        dimension="product_name",
+        metric="item_subtotal",
+        limit=payload.limit,
+        items=items,
+        chart=chart,
+    )
 
 
-@router.post("/top-members")
-async def top_members(payload: dict = Body(...)):
+@router.post("/top-members", response_model=RankingResponse)
+async def top_members(payload: RankingRequest):
     """
     高貢獻會員排行（安全分析）
     - 維度：member_id
     - 指標：SUM(order_total_amount)
     """
-    analysis_id = payload.get("analysis_id")
-    if not analysis_id:
-        raise HTTPException(status_code=400, detail="analysis_id is required")
-
-    limit = int(payload.get("limit", 10))
-    if limit <= 0:
-        limit = 10
-
-    csv_path = DATA_INPUT_DIR / f"{analysis_id}.csv"
+    csv_path = DATA_INPUT_DIR / f"{payload.analysis_id}.csv"
     if not csv_path.exists():
         raise HTTPException(status_code=404, detail="Analysis data not found")
 
@@ -291,42 +298,45 @@ async def top_members(payload: dict = Body(...)):
         FROM read_csv_auto('{str(csv_path)}')
         GROUP BY member_id
         ORDER BY value DESC
-        LIMIT {limit}
+        LIMIT {payload.limit}
     """
     rows = conn.execute(query).fetchall()
 
-    return {
-        "analysis_id": analysis_id,
-        "dimension": "member_id",
-        "metric": "order_total_amount",
-        "limit": limit,
-        "items": [{"key": r[0], "value": r[1]} for r in rows],
-    }
+    items = [RankingItem(key=r[0], value=r[1]) for r in rows]
+    items_dicts = [i.model_dump() for i in items]
+    chart = build_ranking_chart(
+        items=items_dicts,
+        dimension_label="會員",
+        metric_label="訂單金額",
+        chart_title="高貢獻會員排行",
+    )
+
+    return RankingResponse(
+        analysis_id=payload.analysis_id,
+        dimension="member_id",
+        metric="order_total_amount",
+        limit=payload.limit,
+        items=items,
+        chart=chart,
+    )
 
 
-@router.post("/aov")
-async def aov(payload: dict = Body(...)):
+@router.post("/aov", response_model=AOVResponse)
+async def aov(payload: GranularityRequest):
     """
     平均客單價（AOV）
     - 計算方式：SUM(order_total_amount) / COUNT(DISTINCT order_id)
     - granularity：day / month
     """
-    analysis_id = payload.get("analysis_id")
-    if not analysis_id:
-        raise HTTPException(status_code=400, detail="analysis_id is required")
-
-    granularity = payload.get("granularity", "day")
-    if granularity not in ("day", "month"):
-        raise HTTPException(status_code=400, detail="granularity must be 'day' or 'month'")
-
-    csv_path = DATA_INPUT_DIR / f"{analysis_id}.csv"
+    csv_path = DATA_INPUT_DIR / f"{payload.analysis_id}.csv"
     if not csv_path.exists():
         raise HTTPException(status_code=404, detail="Analysis data not found")
 
     conn = duckdb.connect()
+    g = payload.granularity
     query = f"""
         SELECT
-            DATE_TRUNC('{granularity}', purchase_time) AS time,
+            DATE_TRUNC('{g}', purchase_time) AS time,
             SUM(order_total_amount) * 1.0 / COUNT(DISTINCT order_id) AS value
         FROM read_csv_auto('{str(csv_path)}')
         GROUP BY time
@@ -334,34 +344,36 @@ async def aov(payload: dict = Body(...)):
     """
     rows = conn.execute(query).fetchall()
 
+    fmt = "%Y-%m-%d" if g == "day" else "%Y-%m"
     series = [
-        {
-            "time": r[0].strftime("%Y-%m-%d") if granularity == "day" else r[0].strftime("%Y-%m"),
-            "value": r[1],
-        }
+        TimeSeriesPoint(time=r[0].strftime(fmt), value=r[1])
         for r in rows
     ]
 
-    return {
-        "analysis_id": analysis_id,
-        "granularity": granularity,
-        "metric": "aov",
-        "series": series,
-    }
+    series_dicts = [s.model_dump() for s in series]
+    chart = build_time_series_chart(
+        series=series_dicts,
+        metric_label="客單價",
+        granularity=g,
+        chart_title="平均客單價（AOV）趨勢",
+    )
+
+    return AOVResponse(
+        analysis_id=payload.analysis_id,
+        granularity=g,
+        series=series,
+        chart=chart,
+    )
 
 
-@router.post("/new-vs-returning")
-async def new_vs_returning(payload: dict = Body(...)):
+@router.post("/new-vs-returning", response_model=NewVsReturningResponse)
+async def new_vs_returning(payload: AnalysisRequest):
     """
     新客 vs 回購客占比分析
     - 維度：first_purchase_flag
     - 指標：訂單數
     """
-    analysis_id = payload.get("analysis_id")
-    if not analysis_id:
-        raise HTTPException(status_code=400, detail="analysis_id is required")
-
-    csv_path = DATA_INPUT_DIR / f"{analysis_id}.csv"
+    csv_path = DATA_INPUT_DIR / f"{payload.analysis_id}.csv"
     if not csv_path.exists():
         raise HTTPException(status_code=404, detail="Analysis data not found")
 
@@ -376,50 +388,57 @@ async def new_vs_returning(payload: dict = Body(...)):
     rows = conn.execute(query).fetchall()
 
     counts = {r[0]: r[1] for r in rows}
-    return {
-        "analysis_id": analysis_id,
-        "dimension": "customer_type",
-        "items": [
-            {"key": "new", "value": counts.get("new", 0)},
-            {"key": "returning", "value": counts.get("returning", 0)},
-        ],
-    }
+    items = [
+        RankingItem(key="new", value=counts.get("new", 0)),
+        RankingItem(key="returning", value=counts.get("returning", 0)),
+    ]
+    items_dicts = [i.model_dump() for i in items]
+    chart = build_pie_chart(
+        items=items_dicts,
+        chart_title="新客 vs 回購客占比",
+    )
+
+    return NewVsReturningResponse(
+        analysis_id=payload.analysis_id,
+        items=items,
+        chart=chart,
+    )
 
 
-@router.get("/capabilities")
+@router.get("/capabilities", response_model=list[CapabilityItem])
 def capabilities():
     """
     系統支援的分析能力清單（前端請以此為準）
     """
     return [
-        {
-            "key": "time_trend",
-            "label": "時間序列趨勢分析",
-            "description": "依日期或月份聚合銷售金額，觀察時間趨勢。",
-            "chart": "line",
-        },
-        {
-            "key": "top_products",
-            "label": "熱門商品排行",
-            "description": "依商品名稱彙總銷售金額，列出銷售額最高的商品。",
-            "chart": "bar",
-        },
-        {
-            "key": "top_members",
-            "label": "高貢獻會員排行",
-            "description": "依會員彙總訂單金額，找出貢獻最高的客戶。",
-            "chart": "bar",
-        },
-        {
-            "key": "aov",
-            "label": "平均客單價（AOV）",
-            "description": "計算每筆訂單的平均消費金額。",
-            "chart": "line",
-        },
-        {
-            "key": "new_vs_returning",
-            "label": "新客與回購客占比",
-            "description": "比較新客與回購客的訂單數量占比。",
-            "chart": "pie",
-        },
+        CapabilityItem(
+            key="time_trend",
+            label="時間序列趨勢分析",
+            description="依日期或月份聚合銷售金額，觀察時間趨勢。",
+            chart="line",
+        ),
+        CapabilityItem(
+            key="top_products",
+            label="熱門商品排行",
+            description="依商品名稱彙總銷售金額，列出銷售額最高的商品。",
+            chart="bar",
+        ),
+        CapabilityItem(
+            key="top_members",
+            label="高貢獻會員排行",
+            description="依會員彙總訂單金額，找出貢獻最高的客戶。",
+            chart="bar",
+        ),
+        CapabilityItem(
+            key="aov",
+            label="平均客單價（AOV）",
+            description="計算每筆訂單的平均消費金額。",
+            chart="line",
+        ),
+        CapabilityItem(
+            key="new_vs_returning",
+            label="新客與回購客占比",
+            description="比較新客與回購客的訂單數量占比。",
+            chart="pie",
+        ),
     ]

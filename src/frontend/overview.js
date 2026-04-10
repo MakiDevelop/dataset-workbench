@@ -260,8 +260,21 @@
       })
         .then(r => r.json())
         .then(trend => {
-          if (Array.isArray(trend.series)) {
-            renderDailyOrdersChart("chart-daily-orders", trend.series);
+          // Plotly 優先：後端有 chart spec 就用 Plotly
+          if (trend.chart && trend.chart.data && typeof Plotly !== "undefined") {
+            const el = document.getElementById("chart-daily-orders");
+            if (el) {
+              Plotly.newPlot(el, trend.chart.data, trend.chart.layout, {
+                responsive: true,
+                displayModeBar: false,
+              });
+            }
+          } else if (Array.isArray(trend.series)) {
+            // Chart.js fallback（canvas 不存在時跳過）
+            const canvas = document.getElementById("chart-daily-orders");
+            if (canvas && canvas.tagName === "CANVAS") {
+              renderDailyOrdersChart("chart-daily-orders", trend.series);
+            }
           }
         })
         .catch(() => {

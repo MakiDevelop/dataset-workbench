@@ -663,7 +663,10 @@ async function dispatchAnalysis(card) {
       kpiWrapper.appendChild(kpi2);
     }
 
-    if (mapping.chart === "line") {
+    // ===== Plotly 優先：後端有 chart spec 就用 Plotly =====
+    if (data.chart && data.chart.data && typeof Plotly !== "undefined") {
+      renderPlotlyChart(chartSection, data.chart);
+    } else if (mapping.chart === "line") {
       renderTimeTrendChart(chartSection, data.series);
     } else if (mapping.chart === "bar") {
       const arr = Array.isArray(data.items)
@@ -701,25 +704,37 @@ function runAnalysisByKey(analysisKey) {
  * - 直接輸出目前畫面上的圖表
  */
 function exportCurrentChartAsPNG() {
-  if (!currentChartContainer || !currentChartContainer._chart) {
-    alert("目前沒有可匯出的圖表，請先點選一個分析。");
-    return;
-  }
-  const chart = currentChartContainer._chart;
-  const dataUrl = chart.toBase64Image("image/png", 1);
-
-  // 組合檔名：analysisKey + granularity + timestamp
   const key = currentAnalysisKey || "chart";
   const gran = currentGranularity || "day";
   const ts = new Date().toISOString().replace(/[:.]/g, "-");
   const filename = `${key}_${gran}_${ts}.png`;
 
-  const a = document.createElement("a");
-  a.href = dataUrl;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
+  // Plotly 圖表匯出
+  if (currentChartContainer && currentChartContainer._plotlyDiv) {
+    Plotly.downloadImage(currentChartContainer._plotlyDiv, {
+      format: "png",
+      filename: filename.replace(".png", ""),
+      height: 600,
+      width: 1000,
+      scale: 2,
+    });
+    return;
+  }
+
+  // Chart.js fallback
+  if (currentChartContainer && currentChartContainer._chart) {
+    const chart = currentChartContainer._chart;
+    const dataUrl = chart.toBase64Image("image/png", 1);
+    const a = document.createElement("a");
+    a.href = dataUrl;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    return;
+  }
+
+  alert("目前沒有可匯出的圖表，請先點選一個分析。");
 }
 
 // ===== Step B: 分析選項點擊事件統一派發與狀態管理 =====
@@ -838,8 +853,51 @@ if (chartToggleBtn && chartPanel) {
   });
 }
 
-// 用 Chart.js 繪製時間趨勢/客單價折線圖
-// 為什麼用 Chart.js？→ 提供互動性與美觀，支援響應式與動畫，維護簡單。
+// ===== Plotly 通用渲染函式 =====
+// 接收後端回傳的 chart spec（{ data, layout }），用 Plotly.newPlot 渲染
+// 安全性：chartSpec 來自自建後端 API，非使用者輸入，不含 HTML
+function renderPlotlyChart(container, chartSpec) {
+  const chartArea = container.querySelector(".chart-area");
+  if (!chartArea) return;
+
+  // 清空子元素（安全方式，不使用 innerHTML）
+  while (chartArea.firstChild) {
+    chartArea.removeChild(chartArea.firstChild);
+  }
+
+  // 先清掉舊的 Chart.js 實例（如果有）
+  if (container._chart) {
+    container._chart.destroy();
+    container._chart = null;
+  }
+
+  const plotDiv = document.createElement("div");
+  plotDiv.style.width = "100%";
+  plotDiv.style.minHeight = "400px";
+  chartArea.appendChild(plotDiv);
+
+  const config = {
+    responsive: true,
+    displayModeBar: true,
+    modeBarButtonsToAdd: ["toImage"],
+    toImageButtonOptions: {
+      format: "png",
+      filename: `${currentAnalysisKey || "chart"}_${currentGranularity || "day"}_${new Date().toISOString().slice(0, 10)}`,
+      height: 600,
+      width: 1000,
+      scale: 2,
+    },
+    displaylogo: false,
+  };
+
+  Plotly.newPlot(plotDiv, chartSpec.data, chartSpec.layout, config);
+
+  // 標記為 Plotly 圖表（PNG 匯出用）
+  container._plotlyDiv = plotDiv;
+  container._chart = null;
+}
+
+// 用 Chart.js 繪製時間趨勢/客單價折線圖（fallback）
 // data 格式: [{ time: string, value: number }, ...]
 function renderTimeTrendChart(container, data) {
   // 只清空 .chart-area
