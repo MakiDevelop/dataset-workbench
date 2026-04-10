@@ -21,3 +21,10 @@ python-multipart
 
 # dev / analysis
 ipython
+
+# runtime dependency (DuckDB timezone handling)
+pytz
+
+# testing
+pytest
+httpx
