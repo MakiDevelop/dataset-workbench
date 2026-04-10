@@ -48,6 +48,19 @@
   </section>
 
   <hr />
+
+  <!-- Epic 4: 智慧分析推薦 -->
+  <section id="recommendation-section" class="hidden">
+    <h2>智慧分析推薦</h2>
+    <p class="hint">系統根據資料結構自動排序，分數越高越推薦。</p>
+    <div id="recommendation-list"></div>
+    <div style="margin-top: 12px;">
+      <button id="run-all-recommended" type="button" class="primary">
+        一鍵執行所有推薦分析
+      </button>
+    </div>
+  </section>
+
   <!-- 此區塊保留用於呈現 /analysis/capabilities 的結果 -->
   <section>
     <h2>可用分析</h2>
@@ -66,7 +79,8 @@
   </div>
 
   <!-- 開發階段靜態資源會透過 /static 提供 -->
-  <script src="/static/app.js"></script>
+  <!-- Epic 6: 改為 ES6 module，入口為 app.js，其他模組位於 modules/ -->
+  <script type="module" src="/static/app.js"></script>
   </div>
 </body>
 </html>

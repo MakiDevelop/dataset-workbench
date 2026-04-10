@@ -40,12 +40,16 @@ from api.schemas import (
     CapabilityItem,
     TimeSeriesPoint,
     RankingItem,
+    RecommendationResponse,
+    InsightRequest,
+    InsightResponse,
 )
 from pipelines.chart_builder import (
     build_time_series_chart,
     build_ranking_chart,
     build_pie_chart,
 )
+from pipelines.recommendation import recommend_analyses, generate_insight
 
 # === Router 一定要先定義（否則 decorator 會 NameError） ===
 router = APIRouter()
@@ -402,6 +406,49 @@ async def new_vs_returning(payload: AnalysisRequest):
         analysis_id=payload.analysis_id,
         items=items,
         chart=chart,
+    )
+
+
+@router.post("/recommend", response_model=RecommendationResponse)
+async def recommend(payload: AnalysisRequest):
+    """
+    智慧分析推薦：根據 bootstrap 結果推算每個分析的推薦分數與理由。
+    """
+    csv_path = DATA_INPUT_DIR / f"{payload.analysis_id}.csv"
+    if not csv_path.exists():
+        raise HTTPException(status_code=404, detail="Analysis data not found")
+
+    conn = duckdb.connect()
+    overview = step_1_overview(conn, str(csv_path))
+    schema_df = step_2_schema(conn, str(csv_path))
+    grains = step_4_grain_detection(schema_df)
+    blacklist = derive_analysis_blacklist(grains, schema_df)
+    columns = schema_df["column_name"].tolist()
+
+    recs = recommend_analyses(
+        overview=overview,
+        grains=grains,
+        schema_columns=columns,
+        blacklist=blacklist,
+    )
+
+    return RecommendationResponse(
+        analysis_id=payload.analysis_id,
+        recommendations=recs,
+    )
+
+
+@router.post("/insight", response_model=InsightResponse)
+async def insight(payload: InsightRequest):
+    """
+    根據分析結果產生文字摘要 insight。
+    前端在拿到分析結果後呼叫此 endpoint 取得摘要。
+    """
+    text = generate_insight(payload.analysis_key, payload.result_data)
+    return InsightResponse(
+        analysis_id=payload.analysis_id,
+        analysis_key=payload.analysis_key,
+        insight=text,
     )
 
 

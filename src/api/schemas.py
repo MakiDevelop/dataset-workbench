@@ -215,3 +215,31 @@ class ChartSpec(BaseModel):
     """Complete Plotly chart spec, ready for Plotly.newPlot()."""
     data: list[PlotlyTrace]
     layout: PlotlyLayout
+
+
+# ============================================================
+# Recommendation (Epic 4: 智慧分析推薦)
+# ============================================================
+
+class RecommendationItem(BaseModel):
+    key: str
+    score: int
+    reason: str
+    status: str  # "recommended" | "caution" | "blocked"
+
+
+class RecommendationResponse(BaseModel):
+    analysis_id: str
+    recommendations: list[RecommendationItem]
+
+
+class InsightRequest(BaseModel):
+    analysis_id: str
+    analysis_key: str
+    result_data: dict[str, Any]
+
+
+class InsightResponse(BaseModel):
+    analysis_id: str
+    analysis_key: str
+    insight: str
